@@ -172,7 +172,8 @@ class VanillaPlanHead2(nn.Module):
             dropout=0.1,
             activation='relu',
             ffn_channels=256,
-            future_frames=6
+            future_frames=6,
+            dataset="NUSCENE"
     ):
         super().__init__()
         self.velocity_dim = 3
@@ -185,6 +186,7 @@ class VanillaPlanHead2(nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(512, 7 * 3)
         )
+        self.dataset = dataset
 
     def warp_gt(self, gts, device):
         res=[]
@@ -202,22 +204,32 @@ class VanillaPlanHead2(nn.Module):
         gts=[]
         if 'token' in kwargs:
             if not hasattr(self, 'ad'):
-                self.ad = pickle.load(open('stp3_val/data_nuscene.pkl', 'rb'))
+                if self.dataset == "NUSCENE":
+                    self.ad = pickle.load(open('stp3_val/data_nuscene.pkl', 'rb'))
+                elif self.dataset == "CARLA":
+                    self.ad = pickle.load(open('./train.pkl', 'rb'))
             tokens = kwargs['token']
             velocitys = []
             for j, token in enumerate(tokens):
-                assert token in self.ad
+                #print(token)
+                #print(self.ad)
+                assert token in self.ad or self.ad[token] is not None 
                 cur_info = []
                 key = list(self.ad[token])
                 key.sort()
+                #print(key)
                 for k in key:
                     if k=='gt':continue
+                    if k=="rgb_path":continue
+                    if k=="x":print(f"x: {self.ad[token][k]}")
                     ele = self.ad[token][k]
                     if count_layers(ele) == 2:
                         cur_info += ele
                     else:
                         cur_info.append(ele)
-                cur_info = torch.tensor(cur_info).to(device).to(dtype).flatten().unsqueeze(-1)
+                print(cur_info)
+                #cur_info = torch.tensor(cur_info).to(device).to(dtype).flatten().unsqueeze(-1)
+                exit()
                 velocitys.append(cur_info)
                 gts.append(self.ad[token]['gt'])
 
@@ -247,7 +259,10 @@ class VanillaPlanHead2(nn.Module):
         dtype = torch.float32
         if 'token' in kwargs:
             if not hasattr(self, 'ad'):
-                self.ad = pickle.load(open('stp3_val/data_nuscene.pkl', 'rb'))
+                if self.dataset == "NUSCENE":
+                    self.ad = pickle.load(open('stp3_val/data_nuscene.pkl', 'rb'))
+                elif self.dataset == "CARLA":
+                    self.ad = pickle.load(open('./train.pkl', 'rb'))
             tokens = kwargs['token']
             velocitys = []
             for j, token in enumerate(tokens):
