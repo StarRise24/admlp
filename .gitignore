@@ -1,1 +1,10 @@
-**__pycache**
+pytorch/admlp/data/
+pytorch/admlp/dump.txt
+pytorch/admlp/fengze_nuscenes_infos_train.pkl
+pytorch/admlp/fengze_nuscenes_infos_val.pkl
+pytorch/admlp/mlp2.pth
+pytorch/admlp/output_data.pkl
+pytorch/admlp/runs/
+pytorch/admlp/stp3_val/
+pytorch/admlp/train.pkl
+*.pth

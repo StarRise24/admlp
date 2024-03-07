@@ -10,6 +10,11 @@ from torchmetrics import Metric
 import copy
 import math
 from skimage.draw import polygon
+from time import time_ns, time
+from torchvision.models import resnet50
+from torchvision.transforms import PILToTensor
+import PIL
+
 
 __all__ = ["VanillaPlanHead2"]
 
@@ -173,20 +178,35 @@ class VanillaPlanHead2(nn.Module):
             activation='relu',
             ffn_channels=256,
             future_frames=6,
-            dataset="NUSCENE"
+            dataset="NUSCENE",
+            enable_image=False
     ):
         super().__init__()
         self.velocity_dim = 3
         self.past_frame = 5
+
+        # Must be 1000 to use pretrained weights
+        resnet_classes = 1000
+        admlp_params = self.velocity_dim * (self.past_frame + 2)
+
         self.plan_head = nn.Sequential(
-            nn.Linear(self.velocity_dim * (self.past_frame + 2), 512),
+            nn.Linear(admlp_params + resnet_classes if enable_image else admlp_params, 512),
             nn.ReLU(inplace=True),
             nn.Linear(512, 512),
             # nn.Dropout(p=0.1),
             nn.ReLU(inplace=True),
-            nn.Linear(512, 7 * 3)
+            nn.Linear(512, 7*3)
         )
+        self.enable_image = enable_image
         self.dataset = dataset
+        if dataset == "NUSCENE":
+            self.ad = pickle.load(open('stp3_val/data_nuscene.pkl', 'rb'))
+        elif dataset == "CARLA":
+            self.ad = pickle.load(open('./train.pkl', 'rb'))
+        
+        if enable_image:
+            self.rgb_feature_extractor = resnet50(num_classes=resnet_classes, weights="IMAGENET1K_V1")
+            self.PIL2T = PILToTensor()
 
     def warp_gt(self, gts, device):
         res=[]
@@ -203,37 +223,42 @@ class VanillaPlanHead2(nn.Module):
         dtype = torch.float32
         gts=[]
         if 'token' in kwargs:
-            if not hasattr(self, 'ad'):
-                if self.dataset == "NUSCENE":
-                    self.ad = pickle.load(open('stp3_val/data_nuscene.pkl', 'rb'))
-                elif self.dataset == "CARLA":
-                    self.ad = pickle.load(open('./train.pkl', 'rb'))
             tokens = kwargs['token']
             velocitys = []
+            images = []
+
             for j, token in enumerate(tokens):
-                #print(token)
-                #print(self.ad)
-                assert token in self.ad or self.ad[token] is not None 
+                key = self.ad[token]
+                if key is None:
+                    raise Exception(f"Token {token} not found") 
+
                 cur_info = []
-                key = list(self.ad[token])
-                key.sort()
-                #print(key)
-                for k in key:
+                key_list = list(key)
+                key_list.sort()
+
+                for k in key_list:
                     if k=='gt':continue
                     if k=="rgb_path":continue
-                    if k=="x":print(f"x: {self.ad[token][k]}")
-                    ele = self.ad[token][k]
+                    ele = key[k]
                     if count_layers(ele) == 2:
                         cur_info += ele
                     else:
                         cur_info.append(ele)
-                print(cur_info)
-                #cur_info = torch.tensor(cur_info).to(device).to(dtype).flatten().unsqueeze(-1)
-                exit()
+                cur_info = torch.tensor(cur_info).to(device).to(dtype).flatten()
+                
+                if key[k] is not None and self.enable_image:
+                    image = PIL.Image.open(f"data/results/{key['rgb_path'][2:]}")
+                    image = self.PIL2T(image).unsqueeze(0).to(device).to(dtype)
+                    image_features = self.rgb_feature_extractor(image).flatten()
+                    cur_info = torch.cat((cur_info, image_features))
+
+                cur_info = cur_info.unsqueeze(-1)
                 velocitys.append(cur_info)
-                gts.append(self.ad[token]['gt'])
+                gts.append(key['gt'])
+
 
         velocitys = torch.cat(velocitys, dim=-1).permute(1, 0)  # bs,21
+
         input = velocitys
 
         input = self.plan_head(input)  # bs,21
@@ -241,6 +266,8 @@ class VanillaPlanHead2(nn.Module):
         for i in range(1, 8):
             waypoints['x{}'.format(i)] = input[:, 3 * (i - 1):3 * i].unsqueeze(-1)
         gts=self.warp_gt(gts,device)
+
+
         return self.loss(waypoints,gts)
 
     def loss(self, predict_dict, gt_trajectory):
@@ -258,11 +285,6 @@ class VanillaPlanHead2(nn.Module):
         device = torch.device('cuda:0')
         dtype = torch.float32
         if 'token' in kwargs:
-            if not hasattr(self, 'ad'):
-                if self.dataset == "NUSCENE":
-                    self.ad = pickle.load(open('stp3_val/data_nuscene.pkl', 'rb'))
-                elif self.dataset == "CARLA":
-                    self.ad = pickle.load(open('./train.pkl', 'rb'))
             tokens = kwargs['token']
             velocitys = []
             for j, token in enumerate(tokens):

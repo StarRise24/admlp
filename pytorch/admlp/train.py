@@ -18,21 +18,16 @@ from tqdm import tqdm,trange
 import re
 #from evaluate_for_mlp import run
 
-_dataset = "NUSCENE" # CARLA|NUSCENE
+_dataset = "CARLA" # CARLA|NUSCENE
+enable_tqdm = True
+enable_image = True
 
 def train_token():
     if _dataset == "NUSCENE":
         with open('fengze_nuscenes_infos_train.pkl','rb')as f:
             res=[]
             data=pickle.load(f)['infos']
-            #print(data)
-            #with open("dump.txt", "w") as dump:
-            #    regex = r"[a-zA-Z_]+\d?[a-zA-Z_]+"
-            #    dump.write(str(list(re.split("[a-zA-Z_]+\d?[a-zA-Z_]+", str(data)))))
-            #exit()
             for ww in data:
-                #print(ww)
-                #exit()
                 res.append(ww['token'])
             return res
     elif _dataset == "CARLA":
@@ -49,15 +44,16 @@ def test_token():
 def test_token2():
     with open('stp3_val/data_nuscene.pkl','rb')as f:
         res=pickle.load(f)
-        print(res)
+        #print(res)
         for ww in res:
-            print(ww)
+            pass
+            #print(ww)
         return res
 class TokenDataset(Dataset):
     def __init__(self,train=True):
         super(TokenDataset, self).__init__()
         self.train=train
-        self.tokens=train_token() if train else test_token2()
+        self.tokens=train_token() if train else test_token()
 
     def __getitem__(self, item):
         return self.tokens[item]
@@ -92,8 +88,12 @@ def main():
         data = pickle.load(f)
 
     writer = SummaryWriter('runs/train26')
-    model = VanillaPlanHead2(hidden_dim=512, dataset=_dataset)
-    optimizer = optim.AdamW(model.parameters(),lr=4e-6,weight_decay=1e-2)
+    model = VanillaPlanHead2(hidden_dim=512, dataset=_dataset, enable_image=enable_image)
+    if enable_image:
+        #optimizer = optim.AdamW(list(model.parameters()) + list(model.rgb_feature_extractor.parameters()),lr=4e-6,weight_decay=1e-2)
+        optimizer = optim.AdamW(model.parameters(),lr=4e-6,weight_decay=1e-2)
+    else:
+        optimizer = optim.AdamW(model.parameters(),lr=4e-6,weight_decay=1e-2)
     batch_size = 4
     dataset = TokenDataset()
     #dataset = CarlaDataset(data)
@@ -103,11 +103,15 @@ def main():
     epochs = 6
     scheduler = MultiStepLR(optimizer,[2,4],gamma=0.2)
     # evaluate(model)
-    for epoch in trange(epochs):
+    epoch_bar = trange(epochs, disable=not enable_tqdm)
+    for epoch in epoch_bar:
+        epoch_bar.set_description(f"Epoch progression")
         cnt=0
         total_loss = 0
         model.train()
-        for token in dataloader:
+        token_bar = tqdm(dataloader, leave=False, disable=not enable_tqdm)
+        for token in token_bar:
+            token_bar.set_description("Token progression")
             cnt+=len(token)
 
             optimizer.zero_grad()
@@ -120,8 +124,8 @@ def main():
         #writer.add_scalar('Loss/train', avg_loss, epoch)
 
         scheduler.step()
-        evaluate(model)
-    torch.save(model.state_dict(), 'mlp26MBdata.pth')
+        #evaluate(model)
+    torch.save(model.state_dict(), f'mlp_{_dataset}{"_imageenabled" if enable_image else ""}.pth')
     writer.close()
 
 
