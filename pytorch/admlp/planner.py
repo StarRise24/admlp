@@ -11,8 +11,13 @@ import copy
 import math
 from skimage.draw import polygon
 from time import time_ns, time
-from torchvision.models import resnet50
+from torchvision.models import resnet50, vit_b_16, ResNet18_Weights, resnet18
+#from torchvision.models.ResNet18_Weights import IMAGENET1K_V1
+#from torchvision.models.ViT_B_16_Weights import IMAGENET1K_V1
 from torchvision.transforms import PILToTensor
+import torchvision.transforms as transforms
+
+
 import PIL
 
 
@@ -184,28 +189,40 @@ class VanillaPlanHead2(nn.Module):
         super().__init__()
         self.velocity_dim = 3
         self.past_frame = 5
-
+        self.transform = ResNet18_Weights.IMAGENET1K_V1.transforms()
         # Must be 1000 to use pretrained weights
         resnet_classes = 1000
         admlp_params = self.velocity_dim * (self.past_frame + 2)
 
-        self.plan_head = nn.Sequential(
-            nn.Linear(admlp_params + resnet_classes if enable_image else admlp_params, 512),
-            nn.ReLU(inplace=True),
-            nn.Linear(512, 512),
-            # nn.Dropout(p=0.1),
-            nn.ReLU(inplace=True),
-            nn.Linear(512, 7*3)
-        )
+        if enable_image:
+            self.plan_head = nn.Sequential(
+                nn.Linear(admlp_params + resnet_classes, 1024),
+                nn.ReLU(inplace=True),
+                nn.Linear(1024, 1024),
+                nn.ReLU(inplace=True),
+                nn.Linear(1024, 512),
+                # nn.Dropout(p=0.1),
+                nn.ReLU(inplace=True),
+                nn.Linear(512, 7*3)
+            )
+        else:
+            self.plan_head = nn.Sequential(
+                nn.Linear(admlp_params, 512),
+                nn.ReLU(inplace=True),
+                nn.Linear(512, 512),
+                # nn.Dropout(p=0.1),
+                nn.ReLU(inplace=True),
+                nn.Linear(512, 7*3)
+            )
         self.enable_image = enable_image
         self.dataset = dataset
         if dataset == "NUSCENE":
             self.ad = pickle.load(open('stp3_val/data_nuscene.pkl', 'rb'))
         elif dataset == "CARLA":
-            self.ad = pickle.load(open('./train.pkl', 'rb'))
+            self.ad = pickle.load(open('./data.pkl', 'rb'))
         
         if enable_image:
-            self.rgb_feature_extractor = resnet50(num_classes=resnet_classes, weights="IMAGENET1K_V1")
+            self.rgb_feature_extractor = resnet18(num_classes=resnet_classes, weights="IMAGENET1K_V1")
             self.PIL2T = PILToTensor()
 
     def warp_gt(self, gts, device):
@@ -239,6 +256,7 @@ class VanillaPlanHead2(nn.Module):
                 for k in key_list:
                     if k=='gt':continue
                     if k=="rgb_path":continue
+                    if k=="occupancy": continue
                     ele = key[k]
                     if count_layers(ele) == 2:
                         cur_info += ele
@@ -247,8 +265,15 @@ class VanillaPlanHead2(nn.Module):
                 cur_info = torch.tensor(cur_info).to(device).to(dtype).flatten()
                 
                 if key[k] is not None and self.enable_image:
-                    image = PIL.Image.open(f"data/results/{key['rgb_path'][2:]}")
-                    image = self.PIL2T(image).unsqueeze(0).to(device).to(dtype)
+                    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                                    std=[0.229, 0.224, 0.225])
+
+                    image = PIL.Image.open(f"data/results4/{key['rgb_path'][2:]}")
+                    image = self.transform(image)
+                    #image = self.PIL2T(image).float()  
+                    #image = image / 255
+                    #image = normalize(image) 
+                    image = image.unsqueeze(0).to(device).to(dtype)
                     image_features = self.rgb_feature_extractor(image).flatten()
                     cur_info = torch.cat((cur_info, image_features))
 
@@ -284,25 +309,52 @@ class VanillaPlanHead2(nn.Module):
     def inference(self,**kwargs):
         device = torch.device('cuda:0')
         dtype = torch.float32
+        gts=[]
         if 'token' in kwargs:
             tokens = kwargs['token']
             velocitys = []
+            images = []
+
             for j, token in enumerate(tokens):
-                assert token in self.ad
+                key = self.ad[token]
+                if key is None:
+                    raise Exception(f"Token {token} not found") 
+
                 cur_info = []
-                key = list(self.ad[token])
-                key.sort()
-                for k in key:
-                    if k == 'gt': continue
-                    ele = self.ad[token][k]
+                key_list = list(key)
+                key_list.sort()
+
+                for k in key_list:
+                    if k=='gt':continue
+                    if k=="rgb_path":continue
+                    if k=="occupancy":continue
+                    ele = key[k]
                     if count_layers(ele) == 2:
                         cur_info += ele
                     else:
                         cur_info.append(ele)
-                cur_info = torch.tensor(cur_info).to(device).to(dtype).flatten().unsqueeze(-1)
+                cur_info = torch.tensor(cur_info).to(device).to(dtype).flatten()
+                
+                if key.get('rgb_path') is not None and self.enable_image:
+                    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                                    std=[0.229, 0.224, 0.225])
+
+                    image = PIL.Image.open(f"data/results4/{key['rgb_path'][2:]}")
+                    image = self.transform(image)
+                    #image = self.PIL2T(image).float() 
+                    #image = image / 255  
+                    #image = normalize(image) 
+                    image = image.unsqueeze(0).to(device).to(dtype)
+                    image_features = self.rgb_feature_extractor(image).flatten()
+                    cur_info = torch.cat((cur_info, image_features))
+
+                cur_info = cur_info.unsqueeze(-1)
                 velocitys.append(cur_info)
+                gts.append(key['gt'])
+
 
         velocitys = torch.cat(velocitys, dim=-1).permute(1, 0)  # bs,21
+
         input = velocitys
 
         input = self.plan_head(input).detach().cpu().numpy()  # bs,21

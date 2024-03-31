@@ -10,13 +10,14 @@ from stp3.trainer import TrainingModule
 from nuscenes.nuscenes import NuScenes
 from tqdm import tqdm
 import pickle
+import numpy as np
 
 def prepare_future_plan_labels(batch):
         labels = {}
 
         segmentation_labels = batch['segmentation'] 
         future_egomotion = batch['future_egomotion'] 
-        gt_trajectory = batch['gt_trajectory'] 
+        gt_trajectory = batch['gt_trajectory']
 
         # gt trajectory
         labels['gt_trajectory'] = gt_trajectory
@@ -50,7 +51,7 @@ def prepare_future_plan_labels(batch):
 
    
 
-def evaluate(final_traj_path=None, checkpoint_path=None, dataroot=None, online=False):
+def evaluate(final_traj_path=None, checkpoint_path=None, dataroot=None, online=False, dataset=""):
     future_second = 3
     n_present = 3
 
@@ -92,42 +93,75 @@ def evaluate(final_traj_path=None, checkpoint_path=None, dataroot=None, online=F
                 metric_planning_val[i](final[:,:cur_time].to(device), labels['gt_trajectory'][:,1:cur_time+1].to(device), occupancy[:,:cur_time].to(device))
 
     else:
-        # 'stp3_val/segmentation_pedestrian_.pkl
-        gt_traj = open('stp3_val/stp3_traj_gt.pkl','rb')
-        gt_traj_traj = pickle.load(gt_traj)
+        if dataset == "NUSCENE":
+            gt_traj = open('stp3_val/stp3_traj_gt.pkl','rb')
+            gt_traj_traj = pickle.load(gt_traj)
 
-        gt_occup = open('stp3_val/stp3_occupancy.pkl','rb')
-        gt_traj_occup = pickle.load(gt_occup)
+            gt_occup = open('stp3_val/stp3_occupancy.pkl','rb')
+            gt_traj_occup = pickle.load(gt_occup)
 
-        token = open('stp3_val/filter_token.pkl','rb')
-        token_filter = pickle.load(token)
+            token = open('stp3_val/filter_token.pkl','rb')
+            token_filter = pickle.load(token)
+        if dataset == "CARLA":
+            val_tokens = open('./validation.pkl','rb')
+            token_filter = pickle.load(val_tokens)
+
+            data = open('./data.pkl','rb')
+            data = pickle.load(data)
+
         
+
         for token in tqdm(token_filter):
-            final = torch.from_numpy(final_traj[token])
-            gt_trajectory =  torch.tensor(gt_traj_traj[token]['gt_trajectory']).unsqueeze(0)
-            occupancy = gt_traj_occup[token]
+            if dataset == "NUSCENE":
+                final = torch.from_numpy(final_traj[token])
+                gt_trajectory =  torch.tensor(gt_traj_traj[token]['gt_trajectory']).unsqueeze(0)
+                occupancy = gt_traj_occup[token]
+            if dataset == "CARLA":
+                final = torch.from_numpy(final_traj[token])
+                gt_trajectory =  torch.tensor(data[token]['gt']).unsqueeze(0)
+                
+                occupancy = data[token]['occupancy']
+                occupancy = torch.tensor(occupancy).unsqueeze(0)
+
             for i in range(future_second):
                 cur_time = (i+1)*2
-                metric_planning_val[i](final[:,:cur_time], gt_trajectory[:,1:cur_time+1], occupancy[:,:cur_time])
+                if dataset == "NUSCENE":
+                    metric_planning_val[i](final[:,:cur_time], gt_trajectory[:,1:cur_time+1], occupancy[:,:cur_time])
+                if dataset == "CARLA":
+                    metric_planning_val[i](final[:,:cur_time], gt_trajectory[:,:cur_time], occupancy[:,:cur_time], data[token]['rgb_path'])
 
     
     results = {}
+    l2_data = [] 
     for i in range(future_second):
         scores = metric_planning_val[i].compute()
+        l2_data.append(metric_planning_val[i].get_l2_scores())
         for key, value in scores.items():
             results['plan_'+key+'_{}s'.format(i+1)]=value.mean()
 
     for key, value in results.items():
         print(f'{key} : {value.item()}')
 
-def run():
+    return l2_data
+    
+
+
+def run(dataset):
     online = False
     final_traj_path = 'output_data.pkl'
     if not online:
-        evaluate(final_traj_path=final_traj_path, online=False)
+        l2s = evaluate(final_traj_path=final_traj_path, online=False, dataset=dataset)
+        l2_dict = {
+            '1s': l2s[0],
+            '2s': l2s[1],
+            '3s': l2s[2] 
+        }  
+        filename = f'l2_errors.pkl'
+        with open(filename, 'wb') as file:
+            pickle.dump(l2_dict, file)
     else:
         evaluate(final_traj_path=final_traj_path, checkpoint_path='ckpts/STP3_plan.ckpt', dataroot='data/nuscenes',
-                 online=True)
+                 online=True, dataset=dataset)
 
 
 if __name__ == '__main__':
