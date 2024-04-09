@@ -181,6 +181,8 @@ class PlanningMetric(Metric):
             'obj_box_col': self.obj_box_col / self.total,
             'L2': self.L2 / self.total
         }
+    
+   
 
 
 class PlanningMetric_3(Metric):
@@ -217,6 +219,8 @@ class PlanningMetric_3(Metric):
         self.add_state("total", default=torch.tensor(0), dist_reduce_fx="sum")
         self.ct = set()
         self.uu = 0
+        self.L2_list = [] 
+
 
     def evaluate_single_coll(self, traj, segmentation, **kwargs):
         '''
@@ -314,12 +318,14 @@ class PlanningMetric_3(Metric):
 
         return torch.sqrt(((trajs[:, :, :2] - gt_trajs[:, :, :2]) ** 2).sum(dim=-1))
 
-    def update(self, trajs, gt_trajs, segmentation):
+    def update(self, trajs, gt_trajs, segmentation, rgb_path=None):
         '''
         trajs: torch.Tensor (B, n_future, 3)
         gt_trajs: torch.Tensor (B, n_future, 3)
         segmentation: torch.Tensor (B, n_future, 200, 200)
         '''
+
+
         assert trajs.shape == gt_trajs.shape
         trajs = trajs.clone()
 
@@ -339,6 +345,12 @@ class PlanningMetric_3(Metric):
         self.obj_box_col += obj_box_coll_sum
         # print(self.obj_col,self.obj_box_col,self.obj_wgt_col)
         self.L2 += L2.sum(dim=0)
+        L2_mean = np.mean(L2.numpy())
+        self.L2_list.append(L2_mean)
+        # if L2_mean >= 2 and len(L2.tolist()[0] ) == 2:
+            # print("GT traj: ", gt_trajs)
+            # print("Predicted traj: ", trajs)
+            # print("RGB path: ", rgb_path)
         self.total += len(trajs)
 
     def compute(self):
@@ -349,3 +361,6 @@ class PlanningMetric_3(Metric):
             # 'obj_wgt_col': self.obj_wgt_col / self.total,
             'L2': self.L2 / self.total,
         }
+
+    def get_l2_scores(self):
+        return self.L2_list

@@ -207,12 +207,12 @@ class VanillaPlanHead2(nn.Module):
             )
         else:
             self.plan_head = nn.Sequential(
-                nn.Linear(admlp_params, 512),
-                nn.ReLU(inplace=True),
-                nn.Linear(512, 512),
+                nn.Linear(admlp_params, 64),
+                # nn.ReLU(inplace=True),
+                # nn.Linear(256, 256),
                 # nn.Dropout(p=0.1),
                 nn.ReLU(inplace=True),
-                nn.Linear(512, 7*3)
+                nn.Linear(64, 7*3)
             )
         self.enable_image = enable_image
         self.dataset = dataset

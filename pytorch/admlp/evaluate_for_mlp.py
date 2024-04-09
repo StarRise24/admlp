@@ -146,7 +146,7 @@ def evaluate(final_traj_path=None, checkpoint_path=None, dataroot=None, online=F
     
 
 
-def run(dataset):
+def run(dataset, writer, epoch):
     online = False
     final_traj_path = 'output_data.pkl'
     if not online:
@@ -155,7 +155,10 @@ def run(dataset):
             '1s': l2s[0],
             '2s': l2s[1],
             '3s': l2s[2] 
-        }  
+        }
+        if writer is not None:
+            for l in l2_dict.keys():
+                writer.add_scalar(f"Loss/eval/{l}", sum(l2_dict[l])/len(l2_dict[l]), epoch)
         filename = f'l2_errors.pkl'
         with open(filename, 'wb') as file:
             pickle.dump(l2_dict, file)

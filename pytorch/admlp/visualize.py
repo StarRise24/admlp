@@ -7,7 +7,7 @@ from scipy.stats import gaussian_kde
 import seaborn as sns
 from matplotlib.collections import LineCollection
 
-PLOT_INDIVIDUAL = True
+PLOT_INDIVIDUAL = False
 
 def get_nuscenes_data():
     data_dict = pickle.load(open('stp3_val/data_nuscene.pkl', 'rb'))
@@ -208,8 +208,8 @@ keys = ['x', 'a', 'v', 'cmd', 'gt']
 print("CARLA LENGTH: ", len(carla_dataset))
 print("NUSCENE LENGTH: ", len(nuscenes_dataset))
 
-#plot_histograms(carla_dataset, nuscenes_dataset, keys)
+plot_histograms(carla_dataset, nuscenes_dataset, keys)
 #plot2dtraj(carla_dataset)
-plot_l2_errors()
+#plot_l2_errors()
 #compare_occupancy(carla_dataset, )
 

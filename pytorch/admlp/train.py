@@ -15,12 +15,13 @@ from torch.utils.data import DataLoader,Dataset
 from torch.optim.lr_scheduler import MultiStepLR
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm,trange
+from time import time
 import re
-#from evaluate_for_mlp import run
+from evaluate_for_mlp import run
 
 _dataset = "CARLA" # CARLA|NUSCENE
 enable_tqdm = True
-enable_image = True
+enable_image = False
 
 def train_token():
     if _dataset == "NUSCENE":
@@ -33,22 +34,20 @@ def train_token():
     elif _dataset == "CARLA":
         with open("./train.pkl", 'rb') as f:
             data = pickle.load(f)
-            res = list(range(len(data)))
+            res = data
             return res  
 
 def test_token():
-    with open('stp3_val/filter_token.pkl','rb')as f:
-        res=pickle.load(f)
-        return res
+    if _dataset == "NUSCENE":
+        with open('stp3_val/filter_token.pkl','rb')as f:
+            res=pickle.load(f)
+            return res
+    elif _dataset == "CARLA":
+        with open('validation.pkl','rb')as f:
+            res=pickle.load(f)
+            return res
 
-def test_token2():
-    with open('stp3_val/data_nuscene.pkl','rb')as f:
-        res=pickle.load(f)
-        #print(res)
-        for ww in res:
-            pass
-            #print(ww)
-        return res
+
 class TokenDataset(Dataset):
     def __init__(self,train=True):
         super(TokenDataset, self).__init__()
@@ -61,7 +60,7 @@ class TokenDataset(Dataset):
     def __len__(self):
         return len(self.tokens)
 
-def evaluate(model):
+def evaluate(model, dataset_type, writer, epoch):
     dataset = TokenDataset(train=False)
     res = {}
     for i in trange(len(dataset)):
@@ -70,39 +69,64 @@ def evaluate(model):
         res[token[0]] = pred
     with open('output_data.pkl','wb')as f:
         pickle.dump(res,file=f)
-    #run()
+    run(dataset_type, writer, epoch)
 
-class CarlaDataset(Dataset):
-    def __init__(self, data):
-        self.data = data
+def carla_l2_eval(model, writer, epoch):
+    def l2_loss(
+        inputs: torch.Tensor,
+        targets: torch.Tensor,
+        reduction: str = "mean",
+    ) -> torch.Tensor:
+        inputs = inputs.float()
+        targets = targets.float()
+        valid = targets > (-5e3)
+        return F.mse_loss(inputs[valid], targets[valid], reduction=reduction)
 
-    def __len__(self):
-        return len(self.data)
+    data = {} 
+    with open('data.pkl','rb')as f:
+            data = pickle.load(f)
 
-    def __getitem__(self, idx):
-        features, label = self.data[idx]
-        return features, label
+    val_data = []
+    with open('validation.pkl','rb')as f:
+        val_data = pickle.load(f)
+
+    total_l2_error = 0
+    for i in trange(len(tqdm(val_data))):
+        token = [val_data[i]]
+        pred = model.inference(token=token)
+        #print("Pred: ", pred[0])
+        #print("Val data:", data[token[0]]['gt'][0:6])
+        pred = torch.tensor(pred[0])
+        gt = torch.tensor(data[token[0]]['gt'][0:6])
+        #loss = l2_loss(pred, gt)
+        #total_l2_loss += loss.item()
+
+        l2_error = torch.norm(pred - gt)
+        total_l2_error += l2_error.item()        
+
+    avg_l2_error = total_l2_error/len(val_data)
+    writer.add_scalar("Loss/eval", avg_l2_error, epoch)
+    print(pred)
+    print(gt)
+    print(f'Validation L2 error: {avg_l2_error}')
+
 
 def main():
-    with open('train.pkl', 'rb') as f:
-        data = pickle.load(f)
-
-    writer = SummaryWriter('runs/train26')
+    writer = SummaryWriter(f'runs/{_dataset}/train27')
     model = VanillaPlanHead2(hidden_dim=512, dataset=_dataset, enable_image=enable_image)
-    if enable_image:
-        #optimizer = optim.AdamW(list(model.parameters()) + list(model.rgb_feature_extractor.parameters()),lr=4e-6,weight_decay=1e-2)
-        optimizer = optim.AdamW(model.parameters(),lr=4e-6,weight_decay=1e-2)
-    else:
-        optimizer = optim.AdamW(model.parameters(),lr=4e-6,weight_decay=1e-2)
+    optimizer = optim.AdamW(model.parameters(),lr=4e-6,weight_decay=1e-2)
     batch_size = 4
     dataset = TokenDataset()
-    #dataset = CarlaDataset(data)
     dataloader = DataLoader(dataset,batch_size,shuffle=True)
     device = torch.device('cuda:0')
     model = model.to(device)
-    epochs = 6
+
+    evaluate(model, _dataset, writer, 0)
+
+    epochs = 5
+    if enable_image:
+        epochs = 30
     scheduler = MultiStepLR(optimizer,[2,4],gamma=0.2)
-    # evaluate(model)
     epoch_bar = trange(epochs, disable=not enable_tqdm)
     for epoch in epoch_bar:
         epoch_bar.set_description(f"Epoch progression")
@@ -121,14 +145,24 @@ def main():
             total_loss += loss.item()
 
         avg_loss = total_loss / cnt
-        #writer.add_scalar('Loss/train', avg_loss, epoch)
+        writer.add_scalar('Loss/train', avg_loss, epoch+1)
 
         scheduler.step()
-        #evaluate(model)
-    torch.save(model.state_dict(), f'mlp_{_dataset}{"_imageenabled" if enable_image else ""}.pth')
+        evaluate(model, _dataset, writer, epoch+1)
+        #carla_l2_eval(model, writer, epoch)
+    writer.flush()
+    torch.save(model.state_dict(), f'mlp_{_dataset}{"_imageenabled" if enable_image else ""}_{time()}.pth')
     writer.close()
 
 
 if __name__=='__main__':
     main()
+    #gt_occup = open('stp3_val/stp3_occupancy.pkl','rb')
+    #gt_traj_occup = pickle.load(gt_occup)
+    #print(gt_traj_occup.keys())
+    #print(gt_traj_occup['c5f58c19249d4137ae063b0e9ecd8b8e'].shape)
+
+    gt_traj = open('stp3_val/stp3_traj_gt.pkl','rb')
+    gt_traj_traj = pickle.load(gt_traj)
+    print(gt_traj_traj['c5f58c19249d4137ae063b0e9ecd8b8e'])
     #print(train_token())
