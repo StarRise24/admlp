@@ -120,7 +120,8 @@ def evaluate(final_traj_path=None, checkpoint_path=None, dataroot=None, online=F
                 final = torch.from_numpy(final_traj[token])
                 gt_trajectory =  torch.tensor(data[token]['gt']).unsqueeze(0)
                 
-                occupancy = data[token]['occupancy']
+                #occupancy = data[token]['occupancy']
+                occupancy = false_matrix = np.full((6, 200, 200), False)
                 occupancy = torch.tensor(occupancy).unsqueeze(0)
 
             for i in range(future_second):
@@ -128,7 +129,9 @@ def evaluate(final_traj_path=None, checkpoint_path=None, dataroot=None, online=F
                 if dataset == "NUSCENE":
                     metric_planning_val[i](final[:,:cur_time], gt_trajectory[:,1:cur_time+1], occupancy[:,:cur_time])
                 if dataset == "CARLA":
-                    metric_planning_val[i](final[:,:cur_time], gt_trajectory[:,:cur_time], occupancy[:,:cur_time], data[token]['rgb_path'])
+                    #metric_planning_val[i](final[:,:cur_time], gt_trajectory[:,:cur_time], occupancy[:,:cur_time], data[token]['rgb_path'])
+                    metric_planning_val[i](final[:,:cur_time], gt_trajectory[:,1:cur_time+1], occupancy[:,:cur_time], data[token]['rgb_path'])
+
 
     
     results = {}

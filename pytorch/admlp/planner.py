@@ -207,12 +207,12 @@ class VanillaPlanHead2(nn.Module):
             )
         else:
             self.plan_head = nn.Sequential(
-                nn.Linear(admlp_params, 64),
-                # nn.ReLU(inplace=True),
-                # nn.Linear(256, 256),
+                nn.Linear(admlp_params, 512),
+                nn.ReLU(inplace=True),
+                nn.Linear(512, 512),
                 # nn.Dropout(p=0.1),
                 nn.ReLU(inplace=True),
-                nn.Linear(64, 7*3)
+                nn.Linear(512, 7*3)
             )
         self.enable_image = enable_image
         self.dataset = dataset
@@ -252,18 +252,23 @@ class VanillaPlanHead2(nn.Module):
                 cur_info = []
                 key_list = list(key)
                 key_list.sort()
-
+                key_names = []
                 for k in key_list:
                     if k=='gt':continue
                     if k=="rgb_path":continue
                     if k=="occupancy": continue
+                    if k =="gt_path":continue
+                    if k =="speed":continue
+                    if k =="target_speed":continue
+                    key_names.append(k)
                     ele = key[k]
+                    # if k == "v" or k == "a":
+                    #     ele = [0, 0, 0] 
                     if count_layers(ele) == 2:
                         cur_info += ele
                     else:
                         cur_info.append(ele)
                 cur_info = torch.tensor(cur_info).to(device).to(dtype).flatten()
-                
                 if key[k] is not None and self.enable_image:
                     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                     std=[0.229, 0.224, 0.225])
@@ -280,18 +285,16 @@ class VanillaPlanHead2(nn.Module):
                 cur_info = cur_info.unsqueeze(-1)
                 velocitys.append(cur_info)
                 gts.append(key['gt'])
-
+                #print(gts)
 
         velocitys = torch.cat(velocitys, dim=-1).permute(1, 0)  # bs,21
 
         input = velocitys
-
         input = self.plan_head(input)  # bs,21
         waypoints = {}
         for i in range(1, 8):
             waypoints['x{}'.format(i)] = input[:, 3 * (i - 1):3 * i].unsqueeze(-1)
         gts=self.warp_gt(gts,device)
-
 
         return self.loss(waypoints,gts)
 
@@ -300,6 +303,8 @@ class VanillaPlanHead2(nn.Module):
 
         predict = torch.cat((predict_dict['x1'], predict_dict['x2'], predict_dict['x3'], predict_dict['x4'],
                              predict_dict['x5'], predict_dict['x6'], predict_dict['x7']), dim=-1)
+
+
         predict = predict.permute(2, 1, 0)
         loss = l1_loss(predict, gt_trajectory)
         loss_dict = {'default_loss': loss}
@@ -323,12 +328,17 @@ class VanillaPlanHead2(nn.Module):
                 cur_info = []
                 key_list = list(key)
                 key_list.sort()
-
                 for k in key_list:
                     if k=='gt':continue
                     if k=="rgb_path":continue
                     if k=="occupancy":continue
+                    if k =="gt_path":continue
+                    if k =="speed":continue
+                    if k =="target_speed":continue
+
                     ele = key[k]
+                    # if k == "v" or k == "a":
+                    #     ele = [0, 0, 0] 
                     if count_layers(ele) == 2:
                         cur_info += ele
                     else:

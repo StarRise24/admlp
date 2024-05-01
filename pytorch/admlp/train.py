@@ -45,7 +45,7 @@ def test_token():
     elif _dataset == "CARLA":
         with open('validation.pkl','rb')as f:
             res=pickle.load(f)
-            return res
+            return res 
 
 
 class TokenDataset(Dataset):
@@ -71,52 +71,13 @@ def evaluate(model, dataset_type, writer, epoch):
         pickle.dump(res,file=f)
     run(dataset_type, writer, epoch)
 
-def carla_l2_eval(model, writer, epoch):
-    def l2_loss(
-        inputs: torch.Tensor,
-        targets: torch.Tensor,
-        reduction: str = "mean",
-    ) -> torch.Tensor:
-        inputs = inputs.float()
-        targets = targets.float()
-        valid = targets > (-5e3)
-        return F.mse_loss(inputs[valid], targets[valid], reduction=reduction)
-
-    data = {} 
-    with open('data.pkl','rb')as f:
-            data = pickle.load(f)
-
-    val_data = []
-    with open('validation.pkl','rb')as f:
-        val_data = pickle.load(f)
-
-    total_l2_error = 0
-    for i in trange(len(tqdm(val_data))):
-        token = [val_data[i]]
-        pred = model.inference(token=token)
-        #print("Pred: ", pred[0])
-        #print("Val data:", data[token[0]]['gt'][0:6])
-        pred = torch.tensor(pred[0])
-        gt = torch.tensor(data[token[0]]['gt'][0:6])
-        #loss = l2_loss(pred, gt)
-        #total_l2_loss += loss.item()
-
-        l2_error = torch.norm(pred - gt)
-        total_l2_error += l2_error.item()        
-
-    avg_l2_error = total_l2_error/len(val_data)
-    writer.add_scalar("Loss/eval", avg_l2_error, epoch)
-    print(pred)
-    print(gt)
-    print(f'Validation L2 error: {avg_l2_error}')
-
 
 def main():
     writer = SummaryWriter(f'runs/{_dataset}/train27')
     model = VanillaPlanHead2(hidden_dim=512, dataset=_dataset, enable_image=enable_image)
     optimizer = optim.AdamW(model.parameters(),lr=4e-6,weight_decay=1e-2)
     batch_size = 4
-    dataset = TokenDataset()
+    dataset = TokenDataset() 
     dataloader = DataLoader(dataset,batch_size,shuffle=True)
     device = torch.device('cuda:0')
     model = model.to(device)

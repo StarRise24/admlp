@@ -325,7 +325,6 @@ class PlanningMetric_3(Metric):
         segmentation: torch.Tensor (B, n_future, 200, 200)
         '''
 
-
         assert trajs.shape == gt_trajs.shape
         trajs = trajs.clone()
 
