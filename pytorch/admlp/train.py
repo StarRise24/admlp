@@ -72,6 +72,22 @@ def evaluate(model, dataset_type, writer, epoch):
     run(dataset_type, writer, epoch)
 
 
+def validate(model, dataloader):
+    model.eval()  # Set the model to evaluation mode
+    total_loss = 0
+    batches = 0
+    with torch.no_grad():  # No need to track gradients for validation
+        for token in tqdm(dataloader):
+            #token = token.to(device)
+            loss = model(token=token)
+            #total_loss += loss.item() * len(token)
+            total_loss += loss.item()
+
+            batches += 1
+
+    avg_loss = total_loss / batches
+    return avg_loss
+
 def main():
     writer = SummaryWriter(f'runs/{_dataset}/train27')
     model = VanillaPlanHead2(hidden_dim=512, dataset=_dataset, enable_image=enable_image)
@@ -79,41 +95,57 @@ def main():
     batch_size = 4
     dataset = TokenDataset() 
     dataloader = DataLoader(dataset,batch_size,shuffle=True)
+
+    validation_dataset = TokenDataset(train=False)
+    validation_dataloader = DataLoader(validation_dataset, batch_size, shuffle=True)
+
     device = torch.device('cuda:0')
     model = model.to(device)
 
-    evaluate(model, _dataset, writer, 0)
-
-    epochs = 5
+    #evaluate(model, _dataset, writer, 0)
+    #val_loss = validate(model, validation_dataloader, device)
+    epochs = 6
     if enable_image:
         epochs = 30
     scheduler = MultiStepLR(optimizer,[2,4],gamma=0.2)
     epoch_bar = trange(epochs, disable=not enable_tqdm)
+    global_step = 0
     for epoch in epoch_bar:
         epoch_bar.set_description(f"Epoch progression")
-        cnt=0
+        batches = 0
         total_loss = 0
         model.train()
         token_bar = tqdm(dataloader, leave=False, disable=not enable_tqdm)
         for token in token_bar:
             token_bar.set_description("Token progression")
-            cnt+=len(token)
+            #cnt+=len(token)
+            batches += 1
 
             optimizer.zero_grad()
             loss = model(token=token)
             loss.backward()
             optimizer.step()
+
+            writer.add_scalar('Loss/step_train', loss.item(), global_step)
+            global_step += 1
+
             total_loss += loss.item()
 
-        avg_loss = total_loss / cnt
+        avg_loss = total_loss / batches
+        print(f"Train loss at epoch {epoch + 1}: {avg_loss}")
         writer.add_scalar('Loss/train', avg_loss, epoch+1)
 
         scheduler.step()
-        evaluate(model, _dataset, writer, epoch+1)
+        val_loss = validate(model, validation_dataloader)
+        writer.add_scalar('Loss/validate', val_loss, epoch)
+        print(f"Validation loss at epoch {epoch + 1}: {val_loss}")
         #carla_l2_eval(model, writer, epoch)
     writer.flush()
     torch.save(model.state_dict(), f'mlp_{_dataset}{"_imageenabled" if enable_image else ""}_{time()}.pth')
+    evaluate(model, _dataset, writer, epoch+1)
+
     writer.close()
+
 
 
 if __name__=='__main__':
@@ -123,7 +155,7 @@ if __name__=='__main__':
     #print(gt_traj_occup.keys())
     #print(gt_traj_occup['c5f58c19249d4137ae063b0e9ecd8b8e'].shape)
 
-    gt_traj = open('stp3_val/stp3_traj_gt.pkl','rb')
-    gt_traj_traj = pickle.load(gt_traj)
-    print(gt_traj_traj['c5f58c19249d4137ae063b0e9ecd8b8e'])
+    # gt_traj = open('stp3_val/stp3_traj_gt.pkl','rb')
+    # gt_traj_traj = pickle.load(gt_traj)
+    # print(gt_traj_traj['c5f58c19249d4137ae063b0e9ecd8b8e'])
     #print(train_token())
